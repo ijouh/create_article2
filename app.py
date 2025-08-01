@@ -38,8 +38,11 @@ def allowed_file(filename):
 
 
 def get_google_sheet_data():
-    creds = Credentials.from_service_account_file(
-        "credentials.json",
+    import json
+
+    creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
+    creds = Credentials.from_service_account_info(
+        creds_dict,
         scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     )
     client = gspread.authorize(creds)
