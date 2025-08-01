@@ -2,7 +2,7 @@ import os
 import time
 import gspread
 import openai
-import language_tool_python
+import requests
 from flask import Flask, render_template, jsonify, Response, send_file, request
 from google.oauth2.service_account import Credentials
 from io import BytesIO
@@ -26,29 +26,51 @@ WP_URL = os.getenv("WP_URL")
 WP_USER = os.getenv("WP_USER")
 WP_PASS = os.getenv("WP_PASS")
 
-
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
-tool = language_tool_python.LanguageToolPublicAPI('fr-FR')
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def correct_text_with_languagetool(text, language="fr-FR"):
+    url = "https://api.languagetool.org/v2/check"
+    data = {
+        "text": text,
+        "language": language
+    }
+    try:
+        response = requests.post(url, data=data, timeout=10)
+        response.raise_for_status()
+        matches = response.json().get("matches", [])
+        return apply_corrections(text, matches)
+    except Exception as e:
+        print(f"[LanguageTool Error] {e}")
+        return text
+
+def apply_corrections(text, matches):
+    corrected = text
+    offset = 0
+    for match in sorted(matches, key=lambda m: m["offset"]):
+        replacements = match.get("replacements", [])
+        if not replacements:
+            continue
+        replacement = replacements[0]["value"]
+        start = match["offset"] + offset
+        end = start + match["length"]
+        corrected = corrected[:start] + replacement + corrected[end:]
+        offset += len(replacement) - match["length"]
+    return corrected
 
 def get_google_sheet_data():
-    import json
-
-    creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
-    creds = Credentials.from_service_account_info(
-        creds_dict,
+    creds = Credentials.from_service_account_file(
+        "credentials.json",
         scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     )
     client = gspread.authorize(creds)
     sheet = client.open_by_key(SHEET_ID).sheet1
     return sheet.get_all_records()
-
 
 def build_prompt(sujet, lieu, mot_cle, mots_cles_secondaires, ton, public, longueur):
     return f"""
@@ -64,17 +86,14 @@ Longueur souhaitée : {longueur} mots
 Structure l’article avec des titres (niveau 1 et 2), des paragraphes fluides, en style Markdown (avec `#` et `##`) mais sans balises HTML. Rends uniquement le texte de l’article.
     """
 
-
 @app.route("/")
 def home():
     return render_template("form.html")
-
 
 @app.route("/list_rows")
 def list_rows():
     data = get_google_sheet_data()
     return jsonify([{"index": i, "sujet": row.get("Sujet", "Sans sujet")} for i, row in enumerate(data)])
-
 
 @app.route("/generate_from_sheet_stream/<int:row_index>")
 def generate_from_sheet_stream(row_index):
@@ -101,7 +120,6 @@ def generate_from_sheet_stream(row_index):
 
     return Response(stream(), mimetype="text/plain")
 
-
 @app.route("/download_article/<int:row_index>")
 def download_article(row_index):
     data = get_google_sheet_data()
@@ -119,7 +137,7 @@ def download_article(row_index):
     )
 
     texte = completion["choices"][0]["message"]["content"]
-    texte_corrige = tool.correct(texte)
+    texte_corrige = correct_text_with_languagetool(texte)
 
     doc = Document()
     for line in texte_corrige.splitlines():
@@ -140,7 +158,6 @@ def download_article(row_index):
                      download_name=filename,
                      mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-
 @app.route("/upload_image", methods=["POST"])
 def upload_image():
     if 'image' not in request.files:
@@ -156,7 +173,6 @@ def upload_image():
         return jsonify({"success": True, "filename": filename})
     else:
         return jsonify({"success": False, "error": "Type de fichier non autorisé"}), 400
-
 
 @app.route("/publish_to_wordpress/<int:row_index>", methods=["POST"])
 def publish_to_wordpress(row_index):
@@ -176,7 +192,7 @@ def publish_to_wordpress(row_index):
         )
 
         texte = completion["choices"][0]["message"]["content"]
-        texte_corrige = tool.correct(texte)
+        texte_corrige = correct_text_with_languagetool(texte)
 
         wp = Client(WP_URL + 'xmlrpc.php', WP_USER, WP_PASS)
 
@@ -205,7 +221,6 @@ def publish_to_wordpress(row_index):
         post.content = html_article
         post.post_status = 'publish'
 
-        # ✅ Utiliser la colonne "Catégories"
         categories = [cat.strip() for cat in row.get("Catégories", "Non classé").split(',')]
         post.terms_names = {'category': categories}
 
@@ -217,7 +232,6 @@ def publish_to_wordpress(row_index):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 if __name__ == "__main__":
     app.run(debug=True)
