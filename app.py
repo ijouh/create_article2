@@ -64,8 +64,9 @@ def apply_corrections(text, matches):
     return corrected
 
 def get_google_sheet_data():
-    creds = Credentials.from_service_account_file(
-        "credentials.json",
+    service_account_info = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+    creds = Credentials.from_service_account_info(
+        service_account_info,
         scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     )
     client = gspread.authorize(creds)
