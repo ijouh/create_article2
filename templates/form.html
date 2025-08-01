@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8" />
+    <title>Générateur d'article</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 900px;
+            margin-top: 50px;
+            background: #fff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+        #result {
+            min-height: 300px;
+            background: #fefefe;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-y: auto;
+        }
+
+        /* Style Markdown */
+        #result h1 {
+            font-size: 2rem;
+            color: #0d6efd;
+            border-bottom: 2px solid #0d6efd;
+            margin-top: 1.5em;
+            padding-bottom: 5px;
+        }
+        #result h2 {
+            font-size: 1.5rem;
+            color: #198754;
+            margin-top: 1em;
+        }
+        #result p {
+            font-size: 1rem;
+            line-height: 1.6;
+            margin-bottom: 1em;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1 class="mb-4 text-primary">📝 Générer un article</h1>
+
+    <div class="mb-3">
+        <label for="rowSelect" class="form-label">📄 Sélectionnez une ligne :</label>
+        <select class="form-select" id="rowSelect"></select>
+    </div>
+
+    <div class="mb-3">
+        <label for="imageUpload" class="form-label">🖼️ Image (optionnelle) :</label>
+        <input class="form-control" type="file" id="imageUpload" accept="image/*">
+    </div>
+
+    <div class="d-flex gap-2 mb-4">
+        <button class="btn btn-primary" id="generateBtn">⚙️ Générer</button>
+        <button class="btn btn-success" id="downloadBtn">📄 Télécharger</button>
+        <button class="btn btn-danger" id="publishBtn">📤 Publier sur WordPress</button>
+    </div>
+
+    <div id="result"></div>
+</div>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<script>
+let uploadedFilename = null;
+
+async function loadRows() {
+    const select = document.getElementById('rowSelect');
+    select.innerHTML = '<option>Chargement...</option>';
+    const response = await fetch('/list_rows');
+    const rows = await response.json();
+    select.innerHTML = '';
+    rows.forEach(row => {
+        const option = document.createElement('option');
+        option.value = row.index;
+        option.textContent = `Ligne ${row.index} : ${row.sujet}`;
+        select.appendChild(option);
+    });
+}
+
+document.getElementById('imageUpload').addEventListener('change', async function () {
+    const file = this.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const res = await fetch('/upload_image', { method: 'POST', body: formData });
+    const data = await res.json();
+
+    if (data.success) {
+        uploadedFilename = data.filename;
+        alert("✅ Image uploadée avec succès !");
+    } else {
+        alert("❌ Erreur upload image : " + data.error);
+    }
+});
+
+document.getElementById('generateBtn').addEventListener('click', async () => {
+    const index = document.getElementById('rowSelect').value;
+    const resultDiv = document.getElementById('result');
+    resultDiv.textContent = "⏳ Génération...";
+    const res = await fetch(`/generate_from_sheet_stream/${index}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let done = false;
+
+    while (!done) {
+        const { value, done: doneReading } = await reader.read();
+        done = doneReading;
+        if (value) {
+            const chunk = decoder.decode(value);
+            fullText += chunk;
+            resultDiv.innerHTML = marked.parse(fullText);
+        }
+    }
+});
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+    const index = document.getElementById('rowSelect').value;
+    window.open(`/download_article/${index}`, '_blank');
+});
+
+document.getElementById('publishBtn').addEventListener('click', async () => {
+    const index = document.getElementById('rowSelect').value;
+    const resultDiv = document.getElementById('result');
+    resultDiv.textContent = "⏳ Publication...";
+    const body = uploadedFilename ? JSON.stringify({ filename: uploadedFilename }) : null;
+    const res = await fetch(`/publish_to_wordpress/${index}`, {
+        method: 'POST',
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body
+    });
+    const data = await res.json();
+    resultDiv.textContent = data.message || data.error || "✅ Terminé";
+});
+
+window.addEventListener('DOMContentLoaded', loadRows);
+</script>
+</body>
+</html>
