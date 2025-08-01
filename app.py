@@ -13,6 +13,7 @@ from wordpress_xmlrpc.methods.posts import NewPost
 from wordpress_xmlrpc.methods.media import UploadFile
 from wordpress_xmlrpc.compat import xmlrpc_client
 from werkzeug.utils import secure_filename
+import json
 
 app = Flask(__name__)
 
@@ -34,6 +35,7 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+# ✅ Version API publique de LanguageTool
 def correct_text_with_languagetool(text, language="fr-FR"):
     url = "https://api.languagetool.org/v2/check"
     data = {
@@ -63,11 +65,19 @@ def apply_corrections(text, matches):
         offset += len(replacement) - match["length"]
     return corrected
 
+# ✅ Compatible Render + local
 def get_google_sheet_data():
-    creds = Credentials.from_service_account_file(
-        "credentials.json",
-        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    )
+    if os.getenv("GOOGLE_CREDENTIALS_JSON"):
+        service_account_info = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+        creds = Credentials.from_service_account_info(
+            service_account_info,
+            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        )
+    else:
+        creds = Credentials.from_service_account_file(
+            "credentials.json",
+            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        )
     client = gspread.authorize(creds)
     sheet = client.open_by_key(SHEET_ID).sheet1
     return sheet.get_all_records()
